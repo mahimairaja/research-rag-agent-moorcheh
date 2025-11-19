@@ -1,0 +1,139 @@
+import os
+import secrets
+from typing import Dict, Optional
+
+import jwt
+import requests
+import streamlit as st
+
+
+class OAuthHandler:
+    def __init__(self):
+        self.client_id = os.getenv("OAUTH_CLIENT_ID")
+        self.client_secret = os.getenv("OAUTH_CLIENT_SECRET")
+        self.openid_provider_url = os.getenv(
+            "OPENID_PROVIDER_URL", "https://huggingface.co"
+        )
+        self.space_host = os.getenv("SPACE_HOST", "")
+
+        self.oauth_available = bool(self.client_id and self.client_secret)
+
+        self.authorize_url = f"{self.openid_provider_url}/oauth/authorize"
+        self.token_url = f"{self.openid_provider_url}/oauth/token"
+
+    def is_configured(self) -> bool:
+        return self.oauth_available
+
+    def generate_authorization_url(self, redirect_uri: str) -> tuple[str, str]:
+        state = secrets.token_urlsafe(32)
+
+        st.session_state.oauth_state = state
+
+
+        params = {
+            "client_id": self.client_id,
+            "redirect_uri": redirect_uri,
+            "scope": "openid profile",
+            "response_type": "code",
+            "state": state,
+        }
+
+        query_string = "&".join([f"{k}={v}" for k, v in params.items()])
+        auth_url = f"{self.authorize_url}?{query_string}"
+
+        return auth_url, state
+
+    def handle_callback(
+        self, code: str, state: str, redirect_uri: str
+    ) -> Optional[Dict]:
+        stored_state = st.session_state.get("oauth_state")
+        if not stored_state or stored_state != state:
+            st.error("Invalid OAuth state. Please try logging in again.")
+            return None
+
+        try:
+            token_data = {
+                "grant_type": "authorization_code",
+                "code": code,
+                "redirect_uri": redirect_uri,
+                "client_id": self.client_id,
+                "client_secret": self.client_secret,
+            }
+
+            response = requests.post(self.token_url, data=token_data, timeout=10)
+            response.raise_for_status()
+            tokens = response.json()
+
+            id_token = tokens.get("id_token")
+            if not id_token:
+                st.error("No ID token received from OAuth provider.")
+                return None
+
+            decoded_token = jwt.decode(
+                id_token,
+                options={
+                    "verify_signature": False
+                },
+            )
+
+            user_id = decoded_token.get("sub") or decoded_token.get(
+                "preferred_username"
+            )
+            username = (
+                decoded_token.get("preferred_username")
+                or decoded_token.get("name")
+                or user_id
+            )
+
+            if not user_id:
+                st.error("Could not extract user ID from OAuth token.")
+                return None
+
+            user_info = {
+                "user_id": user_id,
+                "username": username,
+                "id_token": id_token,
+                "access_token": tokens.get("access_token"),
+            }
+
+            st.session_state.user_info = user_info
+            st.session_state.authenticated = True
+
+            if "oauth_state" in st.session_state:
+                del st.session_state.oauth_state
+
+            return user_info
+
+        except requests.exceptions.RequestException as e:
+            st.error(f"Error exchanging OAuth code: {str(e)}")
+            return None
+        except jwt.DecodeError as e:
+            st.error(f"Error decoding ID token: {str(e)}")
+            return None
+        except Exception as e:
+            st.error(f"Unexpected error during OAuth callback: {str(e)}")
+            return None
+
+    def get_current_user(self) -> Optional[Dict]:
+        if st.session_state.get("authenticated"):
+            return st.session_state.get("user_info")
+        return None
+
+    def get_user_id(self) -> Optional[str]:
+        user_info = self.get_current_user()
+        if user_info:
+            return user_info.get("user_id")
+        return None
+
+    def logout(self):
+        if "user_info" in st.session_state:
+            del st.session_state.user_info
+        if "authenticated" in st.session_state:
+            del st.session_state.authenticated
+        if "oauth_state" in st.session_state:
+            del st.session_state.oauth_state
+
+
+def get_current_user_id() -> Optional[str]:
+    handler = OAuthHandler()
+    return handler.get_user_id()
