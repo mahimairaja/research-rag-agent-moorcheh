@@ -49,7 +49,7 @@ def get_oauth_redirect_uri() -> str:
     explicit_redirect = os.getenv("OAUTH_REDIRECT_URI")
     if explicit_redirect:
         return _normalize_url(explicit_redirect)
-    return f"{get_app_base_url()}/login/callback"
+    return get_app_base_url()
 
 
 def _get_single_param_value(value):
