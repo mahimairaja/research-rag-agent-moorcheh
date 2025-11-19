@@ -234,6 +234,11 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+st.markdown(
+    '<a href="#" style="display: inline-block; pointer-events: none; opacity: 0.6; cursor: not-allowed; padding: 0.75rem 1.5rem; background: linear-gradient(to right, #0078D4, #00BCF2, #0078D4); color: white; text-decoration: none; border-radius: 8px; font-weight: 700; font-size: 1rem; box-shadow: 0 4px 6px rgba(0, 120, 212, 0.3); transition: transform 0.2s;">☁️ Deploy to Azure</a>',
+    unsafe_allow_html=True,
+)
+st.markdown("<br>", unsafe_allow_html=True)
 
 st.markdown(question_css, unsafe_allow_html=True)
 
