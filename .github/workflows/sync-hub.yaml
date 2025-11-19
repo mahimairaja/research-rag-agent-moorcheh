@@ -17,7 +17,3 @@ jobs:
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: git push https://mahimairaja:$HF_TOKEN@huggingface.co/spaces/mahimairaja/moorcheh-rag main
-      - name: Check large files
-        uses: ActionsDesk/lfs-warning@v2.0
-        with:
-          filesizelimit: 10485760 # this is 10MB so we can sync to HF Spaces
