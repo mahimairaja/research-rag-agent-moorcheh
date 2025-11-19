@@ -110,7 +110,9 @@ if not oauth_handler.is_configured():
     )
     st.stop()
 
-if not st.session_state.authenticated:
+authenticated = st.session_state.get("authenticated", False)
+auth_url = None
+if not authenticated:
     st.markdown(
         '<div class="main-header">🔐 Login Required</div>',
         unsafe_allow_html=True,
@@ -120,13 +122,12 @@ if not st.session_state.authenticated:
         unsafe_allow_html=True,
     )
 
-    auth_url, state = oauth_handler.generate_authorization_url(redirect_uri)
+    auth_url, _ = oauth_handler.generate_authorization_url(redirect_uri)
 
     st.markdown(
-        f'<a href="{auth_url}" target="_self" style="display: inline-block; padding: 0.5rem 1rem; background: linear-gradient(to right, #005A9E, #0078D4, #00BCF2); color: white; text-decoration: none; border-radius: 5px; font-weight: 600;">🔑 Login with Hugging Face</a>',
+        f'<a href="{auth_url}" target="_self" style="display: inline-block; padding: 0.5rem 1rem; background: linear-gradient(to right, #005A9E, #0078D4, #00BCF2); color: white; text-decoration: none; border-radius: 5px; font-weight: 600;">Login with Hugging Face</a>',
         unsafe_allow_html=True,
     )
-    st.stop()
 
 user_info = st.session_state.user_info
 user_id = user_info.get("user_id") if user_info else None
@@ -134,15 +135,31 @@ username = user_info.get("username", "User") if user_info else "User"
 
 namespace = os.getenv("NAMESPACE")
 
-if "db" not in st.session_state:
-    st.session_state.db = Database()
+db = None
+rag_engine = None
 
-if "rag_engine" not in st.session_state:
-    st.session_state.rag_engine = RAGEngine(namespace=namespace, user_id=user_id, db=st.session_state.db)
-elif st.session_state.rag_engine.user_id != user_id:
-    st.session_state.rag_engine = RAGEngine(namespace=namespace, user_id=user_id, db=st.session_state.db)
+if authenticated:
+    if "db" not in st.session_state:
+        st.session_state.db = Database()
+    db = st.session_state.db
+
+    if "rag_engine" not in st.session_state:
+        st.session_state.rag_engine = RAGEngine(
+            namespace=namespace, user_id=user_id, db=st.session_state.db
+        )
+    elif st.session_state.rag_engine.user_id != user_id:
+        st.session_state.rag_engine = RAGEngine(
+            namespace=namespace, user_id=user_id, db=st.session_state.db
+        )
+    else:
+        st.session_state.rag_engine.db = st.session_state.db
+
+    rag_engine = st.session_state.rag_engine
 else:
-    st.session_state.rag_engine.db = st.session_state.db
+    db = st.session_state.get("db")
+    rag_engine = None
+
+chunk_count = rag_engine.get_chunk_count() if rag_engine else 0
 
 if "llm_client" not in st.session_state:
     st.session_state.llm_client = LLMClient()
@@ -150,15 +167,26 @@ if "llm_client" not in st.session_state:
 
 with st.sidebar:
     st.markdown("### 👤 User")
-    st.markdown(f"**Logged in as:** {username}")
-    if st.button("🚪 Logout"):
-        oauth_handler.logout()
-        if "rag_engine" in st.session_state:
-            del st.session_state.rag_engine
-        if "db" in st.session_state:
-            st.session_state.db.close()
-            del st.session_state.db
-        st.rerun()
+    if authenticated:
+        st.markdown(f"**Logged in as:** {username}")
+        if st.button("🚪 Logout"):
+            oauth_handler.logout()
+            if "rag_engine" in st.session_state:
+                del st.session_state.rag_engine
+            if "db" in st.session_state:
+                st.session_state.db.close()
+                del st.session_state.db
+            st.rerun()
+    else:
+        # st.markdown("**Preview Mode**")
+        st.caption(
+            "Sign in with Hugging Face to upload documents and get personalized answers."
+        )
+        if auth_url:
+            st.markdown(
+                f'<a href="{auth_url}" target="_self" style="display: inline-block; padding: 0.45rem 1rem; background: linear-gradient(to right, #005A9E, #0078D4); color: white; text-decoration: none; border-radius: 5px; font-weight: 600;">Login</a>',
+                unsafe_allow_html=True,
+            )
 
     st.divider()
 
@@ -174,16 +202,20 @@ with st.sidebar:
         type=["pdf", "txt", "md"],
         accept_multiple_files=True,
         help="Upload PDF, TXT, or MD files",
+        disabled=not authenticated,
     )
 
     # Index button
-    if st.button("📚 Index Documents", type="primary"):
+    index_clicked = st.button(
+        "📚 Index Documents", type="primary", disabled=not authenticated
+    )
+    if authenticated and index_clicked:
         if uploaded_files:
             with st.spinner("Processing documents..."):
                 try:
                     documents = process_documents(uploaded_files, user_id=user_id)
                     if documents:
-                        st.session_state.rag_engine.add_documents(documents)
+                        rag_engine.add_documents(documents)
                         st.success(
                             f"✅ Indexed {len(documents)} documents from {len(uploaded_files)} file(s)!"
                         )
@@ -194,25 +226,29 @@ with st.sidebar:
                     st.error(f"Error processing documents: {str(e)} expect")
         else:
             st.warning("Please upload files first.")
+    elif not authenticated:
+        st.caption("Login to upload and index your private knowledge base.")
 
     st.divider()
 
-    chunk_count = st.session_state.rag_engine.get_chunk_count()
-
-    if user_id:
-        user_files = st.session_state.db.get_user_files(user_id)
+    if authenticated and user_id and db:
+        user_files = db.get_user_files(user_id)
         if user_files:
             st.markdown("**Indexed Files:**")
             for file_info in user_files:
                 filename = file_info["filename"]
                 count = file_info["count"]
                 st.markdown(f"• {filename} ({count} documents)")
+    elif not authenticated:
+        st.markdown("**Indexed Files:**")
+        st.caption("Preview your library after logging in.")
 
     st.divider()
 
-    if st.button("🔄 Reset Namespace"):
-        st.session_state.rag_engine.reset_namespace()
-        st.rerun()
+    if st.button("🔄 Reset Namespace", disabled=not authenticated):
+        if authenticated and rag_engine:
+            rag_engine.reset_namespace()
+            st.rerun()
 
     st.divider()
 
@@ -251,6 +287,7 @@ question = st.text_input(
     label_visibility="hidden",
     placeholder="e.g., What are the main findings in the research papers?",
     key="question_input",
+    disabled=not authenticated,
 )
 
 col1, col2 = st.columns([5, 1.12], gap="small")
@@ -266,19 +303,22 @@ with col1:
         max_value=10,
         value=5,
         step=1,
+        disabled=not authenticated,
     )
 with col2:
     st.write("")
-    search_clicked = st.button("Search & Generate Answer", type="primary")
+    search_clicked = st.button(
+        "Search & Generate Answer", type="primary", disabled=not authenticated
+    )
 
-if search_clicked:
+if authenticated and search_clicked:
     if not question:
         st.warning("Please enter a question.")
     elif chunk_count == 0:
         st.warning("Please index some documents first.")
     else:
         with st.spinner("Searching and generating answer..."):
-            rag_response = st.session_state.rag_engine.search(question, top_k=top_k)
+            rag_response = rag_engine.search(question, top_k=top_k)
             results = rag_response["results"]
             time_taken = rag_response["time_taken"]
 
@@ -334,6 +374,38 @@ if search_clicked:
                     )
             else:
                 st.warning("No results found. Try rephrasing your question.")
+elif not authenticated:
+    st.info("Preview mode: log in to ask questions about your private documents.")
+    if auth_url:
+        st.markdown(
+            f"""
+            <div style="
+                margin-top: 1rem;
+                padding: 1.5rem;
+                border-radius: 12px;
+                background: linear-gradient(120deg, rgba(0,120,212,0.15), rgba(0,188,242,0.15));
+                border: 1px solid rgba(0, 120, 212, 0.2);
+                box-shadow: 0 8px 18px rgba(0, 0, 0, 0.08);
+            ">
+                <div style="font-size: 1.1rem; font-weight: 700; color: #004578; margin-bottom: 0.5rem;">
+                    Unlock Intelligent RAG Answers
+                </div>
+                <div style="color: #2c3e50; margin-bottom: 0.75rem;">
+                    Upload your knowledge base, retrieve the most relevant passages, and get cite-backed answers powered by Moorcheh.
+                </div>
+                <a href="{auth_url}" target="_self" style="
+                    display: inline-block;
+                    padding: 0.65rem 1.4rem;
+                    background: linear-gradient(to right, #005A9E, #0078D4, #00BCF2);
+                    color: white;
+                    text-decoration: none;
+                    border-radius: 6px;
+                    font-weight: 600;
+                ">🔐 Login to start</a>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
 st.divider()
 st.markdown(
