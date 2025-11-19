@@ -1,3 +1,4 @@
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List
@@ -35,13 +36,21 @@ class IndexedDocument(Base):
 class Database:
 
     def __init__(self, db_path: str = "data/indexed_documents.db"):
-        db_dir = Path(db_path).parent
-        db_dir.mkdir(parents=True, exist_ok=True)
+        connection_string = os.getenv("CONNECTION_STRING")
+        engine_kwargs = {}
 
-        self.db_path = db_path
-        self.engine = create_engine(
-            f"sqlite:///{db_path}", connect_args={"check_same_thread": False}
-        )
+        if connection_string:
+            self.db_path = None
+            self.connection_string = connection_string
+        else:
+            db_dir = Path(db_path).parent
+            db_dir.mkdir(parents=True, exist_ok=True)
+
+            self.db_path = db_path
+            self.connection_string = f"sqlite:///{db_path}"
+            engine_kwargs["connect_args"] = {"check_same_thread": False}
+
+        self.engine = create_engine(self.connection_string, **engine_kwargs)
 
         self.SessionLocal = sessionmaker(bind=self.engine)
         Base.metadata.create_all(self.engine)
