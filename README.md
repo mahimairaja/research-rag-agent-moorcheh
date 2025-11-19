@@ -1,11 +1,10 @@
 ---
 title: Moorcheh Intelligent RAG System
-emoji: 📚
+emoji: 🐜
 colorFrom: blue
 colorTo: purple
-sdk: streamlit
-sdk_version: "1.28.0"
-app_file: src/app.py
+sdk: docker
+app_port: 8501
 pinned: false
 hf_oauth: true
 ---
