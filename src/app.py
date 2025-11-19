@@ -69,9 +69,9 @@ elif not st.session_state.authenticated:
     space_host = os.getenv("SPACE_HOST", "")
     if space_host:
         if not space_host.startswith("http"):
-            redirect_uri = f"https://{space_host}"
+            redirect_uri = f"https://{space_host}/login/callback"
         else:
-            redirect_uri = space_host
+            redirect_uri = f"{space_host}/login/callback"
     else:
         redirect_uri = "http://localhost:8501"
 

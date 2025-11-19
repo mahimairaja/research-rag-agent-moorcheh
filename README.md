@@ -7,6 +7,10 @@ sdk: docker
 app_port: 8501
 pinned: false
 hf_oauth: true
+hf_oauth_scopes:
+ - openid
+ - profile
+ - inference-api
 ---
 
 # Moorcheh Intelligent RAG System
