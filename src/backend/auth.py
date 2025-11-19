@@ -1,6 +1,7 @@
 import os
 import secrets
 from typing import Dict, Optional
+from urllib.parse import urlencode
 
 import jwt
 import requests
@@ -38,7 +39,7 @@ class OAuthHandler:
             "state": state,
         }
 
-        query_string = "&".join([f"{k}={v}" for k, v in params.items()])
+        query_string = urlencode(params)
         auth_url = f"{self.authorize_url}?{query_string}"
 
         return auth_url, state

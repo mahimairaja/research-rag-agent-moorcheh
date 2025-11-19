@@ -1,4 +1,5 @@
 import os
+from functools import lru_cache
 
 import streamlit as st 
 
@@ -9,6 +10,58 @@ from backend.processing import process_documents
 from backend.rag_engine import RAGEngine  
 from style.global_style import css as global_css
 from style.question_style import css as question_css
+
+
+LOGIN_QUERY_KEYS = ("code", "state")
+
+
+def _normalize_url(value: str) -> str:
+    if not value:
+        return value
+    value = value.strip()
+    if not value:
+        return value
+    if not value.startswith("http"):
+        value = f"https://{value}"
+    return value.rstrip("/")
+
+
+@lru_cache(maxsize=1)
+def get_app_base_url() -> str:
+    explicit_base = os.getenv("PUBLIC_APP_URL") or os.getenv("APP_BASE_URL")
+    if explicit_base:
+        return _normalize_url(explicit_base)
+
+    space_host = os.getenv("SPACE_HOST")
+    if space_host:
+        return _normalize_url(space_host)
+
+    space_id = os.getenv("SPACE_ID")
+    if space_id:
+        slug = space_id.replace("/", "--")
+        return _normalize_url(f"https://{slug}.hf.space")
+
+    return _normalize_url("http://localhost:8501")
+
+
+@lru_cache(maxsize=1)
+def get_oauth_redirect_uri() -> str:
+    explicit_redirect = os.getenv("OAUTH_REDIRECT_URI")
+    if explicit_redirect:
+        return _normalize_url(explicit_redirect)
+    return f"{get_app_base_url()}/login/callback"
+
+
+def _get_single_param_value(value):
+    if isinstance(value, list):
+        return value[0]
+    return value
+
+
+def clear_oauth_query_params():
+    params = st.query_params
+    for key in LOGIN_QUERY_KEYS:
+        params.pop(key, None)
 
 st.set_page_config(
     page_title="Moorcheh Intelligent RAG",
@@ -23,6 +76,11 @@ st.markdown(global_css, unsafe_allow_html=True)
 oauth_handler = OAuthHandler()
 
 
+login_success_username = st.session_state.pop("login_success_username", None)
+if login_success_username:
+    st.success(f"✅ Successfully logged in as {login_success_username}!")
+
+
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
 
@@ -31,21 +89,15 @@ if "user_info" not in st.session_state:
 
 
 query_params = st.query_params
-if "code" in query_params and "state" in query_params:
-    code = query_params["code"]
-    state = query_params["state"]
-    space_host = os.getenv("SPACE_HOST", "")
-    if space_host:
-        if not space_host.startswith("http"):
-            redirect_uri = f"https://{space_host}"
-        else:
-            redirect_uri = space_host
-    else:
-        redirect_uri = "http://localhost:8501"
+redirect_uri = get_oauth_redirect_uri()
+if all(key in query_params for key in LOGIN_QUERY_KEYS):
+    code = _get_single_param_value(query_params.get("code"))
+    state = _get_single_param_value(query_params.get("state"))
 
     user_info = oauth_handler.handle_callback(code, state, redirect_uri)
+    clear_oauth_query_params()
     if user_info:
-        st.success(f"✅ Successfully logged in as {user_info.get('username', 'User')}!")
+        st.session_state.login_success_username = user_info.get("username", "User")
         st.rerun()
 
 if not oauth_handler.is_configured():
@@ -65,15 +117,6 @@ elif not st.session_state.authenticated:
         '<div class="sub-header">Please log in with your Hugging Face account to access the RAG Assistant</div>',
         unsafe_allow_html=True,
     )
-
-    space_host = os.getenv("SPACE_HOST", "")
-    if space_host:
-        if not space_host.startswith("http"):
-            redirect_uri = f"https://{space_host}/login/callback"
-        else:
-            redirect_uri = f"{space_host}/login/callback"
-    else:
-        redirect_uri = "http://localhost:8501"
 
     auth_url, state = oauth_handler.generate_authorization_url(redirect_uri)
 
