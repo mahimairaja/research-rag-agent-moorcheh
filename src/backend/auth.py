@@ -1,13 +1,34 @@
-import hashlib
-import hmac
 import os
 import secrets
+import time
+from threading import Lock
 from typing import Dict, Optional
 from urllib.parse import urlencode
 
 import jwt
 import requests
 import streamlit as st
+
+
+class _StateStore:
+    def __init__(self):
+        self._states: dict[str, float] = {}
+        self._lock = Lock()
+
+    def add(self, state: str):
+        with self._lock:
+            self._states[state] = time.time()
+
+    def consume(self, state: str, ttl_seconds: int = 600) -> bool:
+        now = time.time()
+        with self._lock:
+            expired = [key for key, ts in self._states.items() if now - ts > ttl_seconds]
+            for key in expired:
+                self._states.pop(key, None)
+            return self._states.pop(state, None) is not None
+
+
+_STATE_STORE = _StateStore()
 
 
 class OAuthHandler:
@@ -23,39 +44,13 @@ class OAuthHandler:
 
         self.authorize_url = f"{self.openid_provider_url}/oauth/authorize"
         self.token_url = f"{self.openid_provider_url}/oauth/token"
-        state_secret = (
-            os.getenv("OAUTH_STATE_SECRET") or self.client_secret or "state-fallback-secret"
-        )
-        self._state_secret = state_secret.encode("utf-8")
-        self.enforce_state = (
-            os.getenv("ENFORCE_OAUTH_STATE", "false").lower() not in ("0", "false", "no")
-        )
 
     def is_configured(self) -> bool:
         return self.oauth_available
 
-    def _generate_state(self) -> str:
-        nonce = secrets.token_urlsafe(16)
-        signature = hmac.new(
-            self._state_secret,
-            nonce.encode("utf-8"),
-            hashlib.sha256,
-        ).hexdigest()
-        return f"{nonce}.{signature}"
-
-    def _validate_state(self, state: str) -> bool:
-        if not state or "." not in state:
-            return False
-        nonce, provided_signature = state.rsplit(".", 1)
-        expected_signature = hmac.new(
-            self._state_secret,
-            nonce.encode("utf-8"),
-            hashlib.sha256,
-        ).hexdigest()
-        return hmac.compare_digest(provided_signature, expected_signature)
-
     def generate_authorization_url(self, redirect_uri: str) -> tuple[str, str]:
-        state = self._generate_state()
+        state = secrets.token_urlsafe(32)
+        _STATE_STORE.add(state)
 
         params = {
             "client_id": self.client_id,
@@ -73,13 +68,9 @@ class OAuthHandler:
     def handle_callback(
         self, code: str, state: str, redirect_uri: str
     ) -> Optional[Dict]:
-        if not self._validate_state(state):
-            if self.enforce_state:
-                st.error("Invalid OAuth state. Please try logging in again.")
-                return None
-            st.warning(
-                "Unexpected OAuth state returned by the provider; continuing login for now."
-            )
+        if not _STATE_STORE.consume(state):
+            st.error("Invalid OAuth state. Please try logging in again.")
+            return None
 
         try:
             token_data = {

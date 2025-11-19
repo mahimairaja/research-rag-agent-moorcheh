@@ -1,6 +1,7 @@
 import os
 from functools import lru_cache
 
+from dotenv import load_dotenv
 import streamlit as st 
 
 from backend.auth import OAuthHandler  
@@ -13,6 +14,9 @@ from style.question_style import css as question_css
 
 
 LOGIN_QUERY_KEYS = ("code", "state")
+
+
+load_dotenv()
 
 
 def _normalize_url(value: str) -> str:
@@ -101,14 +105,12 @@ if all(key in query_params for key in LOGIN_QUERY_KEYS):
         st.rerun()
 
 if not oauth_handler.is_configured():
-    st.warning("⚠️ OAuth is not configured. Running in development mode.")
-    if "authenticated" not in st.session_state or not st.session_state.authenticated:
-        st.session_state.authenticated = True
-        st.session_state.user_info = {
-            "user_id": "dev_user",
-            "username": "Developer",
-        }
-elif not st.session_state.authenticated:
+    st.error(
+        "OAuth is not configured. Please set OAUTH_CLIENT_ID, OAUTH_CLIENT_SECRET, and OPENID_PROVIDER_URL."
+    )
+    st.stop()
+
+if not st.session_state.authenticated:
     st.markdown(
         '<div class="main-header">🔐 Login Required</div>',
         unsafe_allow_html=True,
