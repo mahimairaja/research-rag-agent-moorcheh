@@ -1,3 +1,5 @@
+import hashlib
+import hmac
 import os
 import secrets
 from typing import Dict, Optional
@@ -21,15 +23,39 @@ class OAuthHandler:
 
         self.authorize_url = f"{self.openid_provider_url}/oauth/authorize"
         self.token_url = f"{self.openid_provider_url}/oauth/token"
+        state_secret = (
+            os.getenv("OAUTH_STATE_SECRET") or self.client_secret or "state-fallback-secret"
+        )
+        self._state_secret = state_secret.encode("utf-8")
+        self.enforce_state = (
+            os.getenv("ENFORCE_OAUTH_STATE", "false").lower() not in ("0", "false", "no")
+        )
 
     def is_configured(self) -> bool:
         return self.oauth_available
 
+    def _generate_state(self) -> str:
+        nonce = secrets.token_urlsafe(16)
+        signature = hmac.new(
+            self._state_secret,
+            nonce.encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest()
+        return f"{nonce}.{signature}"
+
+    def _validate_state(self, state: str) -> bool:
+        if not state or "." not in state:
+            return False
+        nonce, provided_signature = state.rsplit(".", 1)
+        expected_signature = hmac.new(
+            self._state_secret,
+            nonce.encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest()
+        return hmac.compare_digest(provided_signature, expected_signature)
+
     def generate_authorization_url(self, redirect_uri: str) -> tuple[str, str]:
-        state = secrets.token_urlsafe(32)
-
-        st.session_state.oauth_state = state
-
+        state = self._generate_state()
 
         params = {
             "client_id": self.client_id,
@@ -47,10 +73,13 @@ class OAuthHandler:
     def handle_callback(
         self, code: str, state: str, redirect_uri: str
     ) -> Optional[Dict]:
-        stored_state = st.session_state.get("oauth_state")
-        if not stored_state or stored_state != state:
-            st.error("Invalid OAuth state. Please try logging in again.")
-            return None
+        if not self._validate_state(state):
+            if self.enforce_state:
+                st.error("Invalid OAuth state. Please try logging in again.")
+                return None
+            st.warning(
+                "Unexpected OAuth state returned by the provider; continuing login for now."
+            )
 
         try:
             token_data = {
@@ -100,9 +129,6 @@ class OAuthHandler:
             st.session_state.user_info = user_info
             st.session_state.authenticated = True
 
-            if "oauth_state" in st.session_state:
-                del st.session_state.oauth_state
-
             return user_info
 
         except requests.exceptions.RequestException as e:
@@ -131,8 +157,6 @@ class OAuthHandler:
             del st.session_state.user_info
         if "authenticated" in st.session_state:
             del st.session_state.authenticated
-        if "oauth_state" in st.session_state:
-            del st.session_state.oauth_state
 
 
 def get_current_user_id() -> Optional[str]:
